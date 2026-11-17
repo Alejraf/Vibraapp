@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>Reproductor Multimedia YouTube</title>
+  <title>StreamTube</title>
   <style>
     :root {
       --bg: #0f0f13;
@@ -55,16 +55,6 @@
       display: flex;
       align-items: center;
       gap: 8px;
-    }
-
-    .icon-btn {
-      background: transparent;
-      border: 1px solid var(--border);
-      color: var(--text);
-      padding: 6px 10px;
-      border-radius: 8px;
-      font-size: 0.9rem;
-      cursor: pointer;
     }
 
     /* Reproductor 16:9 Responsivo */
@@ -278,59 +268,6 @@
       padding: 30px 10px;
       font-size: 0.9rem;
     }
-
-    /* Modal API Key */
-    .modal-backdrop {
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.75);
-      display: none;
-      align-items: center;
-      justify-content: center;
-      padding: 16px;
-      z-index: 200;
-    }
-
-    .modal-backdrop.open {
-      display: flex;
-    }
-
-    .modal {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 18px;
-      width: 100%;
-      max-width: 400px;
-    }
-
-    .modal h2 {
-      font-size: 1rem;
-      margin-bottom: 8px;
-    }
-
-    .modal p {
-      font-size: 0.82rem;
-      color: var(--text-muted);
-      margin-bottom: 12px;
-      line-height: 1.4;
-    }
-
-    .modal input {
-      width: 100%;
-      padding: 10px;
-      border-radius: 8px;
-      border: 1px solid var(--border);
-      background: var(--bg);
-      color: var(--text);
-      margin-bottom: 12px;
-    }
-
-    .modal-actions {
-      display: flex;
-      justify-content: flex-end;
-      gap: 8px;
-    }
   </style>
 </head>
 <body>
@@ -338,7 +275,6 @@
   <div class="sticky-top">
     <header>
       <h1>▶ StreamTube</h1>
-      <button class="icon-btn" id="openSettingsBtn">⚙️ API Key</button>
     </header>
 
     <div class="player-wrapper">
@@ -379,26 +315,10 @@
     </div>
   </main>
 
-  <!-- Modal Configuración API Key -->
-  <div class="modal-backdrop" id="settingsModal">
-    <div class="modal">
-      <h2>Configurar YouTube API Key</h2>
-      <p>Pega tu clave de YouTube Data API v3. Se guardará localmente en tu navegador.</p>
-      <input type="text" id="apiKeyInput" placeholder="AIzaSy..." />
-      <div class="modal-actions">
-        <button class="ctrl-btn" id="closeSettingsBtn">Cancelar</button>
-        <button class="ctrl-btn active" id="saveApiKeyBtn">Guardar</button>
-      </div>
-    </div>
-  </div>
-
   <script>
-    // ==========================================
-    // 1. CONFIGURACIÓN PRINCIPAL
-    // ==========================================
-    const DEFAULT_API_KEY = "AIzaSyC7jJKXG_GosP56S2xvQk-2AKp9rOoec0I";
+    // Limpia cualquier API Key guardada anteriormente en el navegador
+    localStorage.removeItem("yt_api_key");
 
-    let apiKey = localStorage.getItem("yt_api_key") || DEFAULT_API_KEY;
     let player = null;
     let isPlayerReady = false;
     let autoPlayEnabled = true;
@@ -409,7 +329,7 @@
     let activeTab = "results";
 
     // ==========================================
-    // 2. CARGA DE YOUTUBE IFRAME PLAYER API
+    // 1. CARGA DE YOUTUBE IFRAME PLAYER API
     // ==========================================
     const tag = document.createElement("script");
     tag.src = "https://www.youtube.com/iframe_api";
@@ -434,14 +354,12 @@
       });
     };
 
-    // Detecta cuando termina un video para saltar al siguiente
     function onPlayerStateChange(event) {
       if (event.data === YT.PlayerState.ENDED && autoPlayEnabled) {
         playNext();
       }
     }
 
-    // Si un video tiene restringida la inserción (Error 101/150), salta automáticamente al siguiente
     function onPlayerError() {
       if (autoPlayEnabled && queue.length > currentIndex + 1) {
         document.getElementById("currentTitle").textContent = "Video restringido, saltando al siguiente...";
@@ -450,46 +368,39 @@
     }
 
     // ==========================================
-    // 3. BÚSQUEDA CON YOUTUBE DATA API V3
+    // 2. BÚSQUEDA A TRAVÉS DE TU BACKEND EN RENDER
     // ==========================================
     async function searchYouTube(query) {
-      if (!apiKey || apiKey === "TU_API_KEY_AQUI") {
-        openModal();
-        return;
-      }
-
       const resultsView = document.getElementById("resultsView");
       resultsView.innerHTML = '<div class="status-msg">Buscando...</div>';
       switchTab("results");
 
-      const endpoint = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoEmbeddable=true&maxResults=15&q=${encodeURIComponent(query)}&key=${encodeURIComponent(apiKey)}`;
-
       try {
-        const response = await fetch(endpoint);
+        const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
         const data = await response.json();
 
         if (!response.ok) {
-          const msg = data.error?.message || "Error al consultar la API de YouTube.";
-          resultsView.innerHTML = `<div class="status-msg">⚠️ ${msg}</div>`;
+          const msg = data.error || "Error al consultar el servidor.";
+          resultsView.innerHTML = `<div class="status-msg">⚠️ ${escapeHTML(msg)}</div>`;
           return;
         }
 
-        searchResults = data.items.map((item) => ({
-          id: item.id.videoId,
-          title: decodeHTML(item.snippet.title),
-          channel: item.snippet.channelTitle,
-          thumbnail: item.snippet.thumbnails.medium?.url || item.snippet.thumbnails.default?.url
+        searchResults = (data.items || []).map((item) => ({
+          id: item.id,
+          title: decodeHTML(item.title),
+          channel: item.channel,
+          thumbnail: item.thumbnail
         }));
 
         document.getElementById("resultsCount").textContent = searchResults.length;
         renderResults();
       } catch (err) {
-        resultsView.innerHTML = '<div class="status-msg">⚠️ Error de red al conectar con YouTube.</div>';
+        resultsView.innerHTML = '<div class="status-msg">⚠️ Error de red al conectar con el servidor.</div>';
       }
     }
 
     // ==========================================
-    // 4. CONTROL DE REPRODUCCIÓN Y COLA CONTINUA
+    // 3. CONTROL DE REPRODUCCIÓN Y COLA CONTINUA
     // ==========================================
     function playFromResults(index) {
       queue = [...searchResults];
@@ -554,7 +465,7 @@
     }
 
     // ==========================================
-    // 5. RENDERIZADO DE INTERFAZ
+    // 4. RENDERIZADO DE INTERFAZ
     // ==========================================
     function renderResults() {
       const container = document.getElementById("resultsView");
@@ -645,7 +556,7 @@
     }
 
     // ==========================================
-    // 6. EVENTOS DE BOTONES Y FORMULARIO
+    // 5. EVENTOS DE BOTONES Y FORMULARIO
     // ==========================================
     document.getElementById("searchForm").addEventListener("submit", (e) => {
       e.preventDefault();
@@ -675,23 +586,6 @@
     document.querySelectorAll(".tab").forEach((tab) => {
       tab.onclick = () => switchTab(tab.dataset.tab);
     });
-
-    // Modal API Key
-    const modal = document.getElementById("settingsModal");
-    function openModal() {
-      document.getElementById("apiKeyInput").value = apiKey === "TU_API_KEY_AQUI" ? "" : apiKey;
-      modal.classList.add("open");
-    }
-    document.getElementById("openSettingsBtn").onclick = openModal;
-    document.getElementById("closeSettingsBtn").onclick = () => modal.classList.remove("open");
-    document.getElementById("saveApiKeyBtn").onclick = () => {
-      const val = document.getElementById("apiKeyInput").value.trim();
-      if (val) {
-        apiKey = val;
-        localStorage.setItem("yt_api_key", apiKey);
-        modal.classList.remove("open");
-      }
-    };
   </script>
 </body>
 </html>
